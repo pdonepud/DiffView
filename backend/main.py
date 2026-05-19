@@ -9,24 +9,139 @@ level so the frontend can render inline highlights.
 from __future__ import annotations
 
 import html
+import threading
+from contextlib import asynccontextmanager
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from starlette.requests import Request
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / "frontend" / "templates"
 STATIC_DIR = BASE_DIR / "frontend" / "static"
+WATCHED_DIR = BASE_DIR / "watched"
+WATCHED_DIR.mkdir(exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# File watcher
+#
+# Tracks files directly inside ``watched/``. When a file changes, we record
+# {old_content: <previous snapshot>, new_content: <current contents>} and
+# advance the baseline so the next change compares against this version.
+# ---------------------------------------------------------------------------
+
+
+_watch_lock = threading.Lock()
+_baseline: dict[str, str] = {}
+_changes: dict[str, dict[str, str]] = {}
+
+
+def _read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _is_user_file(name: str) -> bool:
+    # Skip dotfiles and the common editor / atomic-save temp suffixes
+    # (VS Code writes ``foo.html.tmp.<pid>.<rand>`` during save, vim writes
+    # ``.foo.swp``, many editors leave a trailing ``~``).
+    if name.startswith(".") or name.endswith("~"):
+        return False
+    lowered = name.lower()
+    bad_suffixes = (".swp", ".swo", ".bak", ".part", ".crdownload")
+    if lowered.endswith(bad_suffixes):
+        return False
+    if ".tmp." in lowered or lowered.endswith(".tmp"):
+        return False
+    return True
+
+
+def _seed_baseline() -> None:
+    with _watch_lock:
+        _baseline.clear()
+        _changes.clear()
+        for entry in WATCHED_DIR.iterdir():
+            if entry.is_file() and _is_user_file(entry.name):
+                content = _read_text(entry)
+                if content is not None:
+                    _baseline[entry.name] = content
+
+
+class _WatchedHandler(FileSystemEventHandler):
+    def _record(self, src_path: str) -> None:
+        path = Path(src_path)
+        if not path.is_file():
+            return
+        try:
+            rel = path.relative_to(WATCHED_DIR)
+        except ValueError:
+            return
+        # Ignore nested files — only watch the top level.
+        if len(rel.parts) != 1:
+            return
+        if not _is_user_file(path.name):
+            return
+        new_content = _read_text(path)
+        if new_content is None:
+            return
+        name = rel.name
+        with _watch_lock:
+            old = _baseline.get(name, "")
+            # Editors fire spurious modify events on save; skip no-ops.
+            if old == new_content:
+                return
+            _changes[name] = {"old_content": old, "new_content": new_content}
+            _baseline[name] = new_content
+
+    def on_modified(self, event):  # noqa: D401
+        if not event.is_directory:
+            self._record(event.src_path)
+
+    def on_created(self, event):  # noqa: D401
+        if not event.is_directory:
+            self._record(event.src_path)
+
+    def on_moved(self, event):  # noqa: D401
+        # Atomic saves arrive as a move from a temp path onto the target.
+        if not event.is_directory:
+            self._record(event.dest_path)
+
+    # NOTE: on_deleted is intentionally not handled. Many editors save
+    # atomically (write temp → delete original → rename temp), so a delete
+    # event can fire just before the file reappears with new contents. If we
+    # popped the baseline on delete, that follow-up create would compare
+    # against "" and report the entire file as added. Letting a stale entry
+    # linger after a true delete is the lesser evil.
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _seed_baseline()
+    observer = Observer()
+    observer.schedule(_WatchedHandler(), str(WATCHED_DIR), recursive=False)
+    observer.start()
+    try:
+        yield
+    finally:
+        observer.stop()
+        observer.join(timeout=2)
+
 
 app = FastAPI(
     title="DiffView",
     description="GitHub-style file diff visualizer with character-level precision.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -216,3 +331,18 @@ async def index(request: Request) -> HTMLResponse:
 @app.post("/api/diff", response_model=DiffResponse)
 async def diff(payload: DiffRequest) -> DiffResponse:
     return _build_diff(payload.old_content, payload.new_content, payload.context_lines)
+
+
+@app.get("/api/watched")
+async def list_watched() -> dict:
+    with _watch_lock:
+        return {"files": sorted(_changes.keys())}
+
+
+@app.get("/api/watched/{filename}")
+async def get_watched(filename: str) -> dict:
+    with _watch_lock:
+        change = _changes.get(filename)
+    if change is None:
+        raise HTTPException(status_code=404, detail=f"No tracked changes for '{filename}'")
+    return {"filename": filename, **change}

@@ -10,6 +10,8 @@
     newFile: $("new-file"),
     compareBtn: $("compare-btn"),
     loadExampleBtn: $("load-example-btn"),
+    reloadCompareBtn: $("reload-compare-btn"),
+    watchedSelect: $("watched-select"),
     contextLines: $("context-lines"),
     statsBar: $("stats-bar"),
     statAdded: $("stat-added"),
@@ -434,6 +436,68 @@
 
   els.compareBtn.addEventListener("click", runCompare);
   els.loadExampleBtn.addEventListener("click", loadExample);
+
+  // -------------------------------------------------------------------------
+  // Reload & Compare — pull the latest tracked change from watched/
+  // -------------------------------------------------------------------------
+
+  const loadWatchedFile = async (filename) => {
+    const res = await fetch(`/api/watched/${encodeURIComponent(filename)}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Server returned ${res.status}: ${text || res.statusText}`);
+    }
+    const data = await res.json();
+    els.oldContent.value = data.old_content;
+    els.newContent.value = data.new_content;
+    await runCompare();
+  };
+
+  const populateWatchedSelect = (files) => {
+    const sel = els.watchedSelect;
+    sel.innerHTML = '<option value="">Pick a watched file…</option>' +
+      files.map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join("");
+    sel.value = "";
+    sel.hidden = false;
+  };
+
+  const onReloadCompare = async () => {
+    els.reloadCompareBtn.disabled = true;
+    try {
+      const res = await fetch("/api/watched");
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const { files } = await res.json();
+      if (!files || files.length === 0) {
+        alert("No tracked changes yet. Modify a file inside watched/ and try again.");
+        els.watchedSelect.hidden = true;
+        return;
+      }
+      if (files.length === 1) {
+        els.watchedSelect.hidden = true;
+        await loadWatchedFile(files[0]);
+        return;
+      }
+      populateWatchedSelect(files);
+      els.watchedSelect.focus();
+    } catch (err) {
+      console.error(err);
+      alert(`Reload failed: ${err.message}`);
+    } finally {
+      els.reloadCompareBtn.disabled = false;
+    }
+  };
+
+  els.reloadCompareBtn.addEventListener("click", onReloadCompare);
+  els.watchedSelect.addEventListener("change", async () => {
+    const filename = els.watchedSelect.value;
+    if (!filename) return;
+    try {
+      await loadWatchedFile(filename);
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to load ${filename}: ${err.message}`);
+    }
+  });
 
   // File upload → populate textarea
   const wireFileUpload = (input, textarea) => {
