@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DiffView</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <h1 class="app-title">DiffView</h1>
+      <p class="app-tagline">GitHub-style file diff visualizer with character-level precision.</p>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="inputs" aria-label="File inputs">
+      <div class="input-pane">
+        <div class="input-pane__header">
+          <label for="old-content" class="input-pane__label">Original</label>
+          <label for="old-file" class="file-upload-btn" title="Upload a file">Upload</label>
+          <input
+            type="file"
+            id="old-file"
+            class="file-upload-input"
+            accept=".html,.md,.txt,.js,.css,.mermaid"
+          />
+        </div>
+        <textarea
+          id="old-content"
+          class="input-pane__textarea"
+          spellcheck="false"
+          placeholder="Paste the original file contents here..."
+        ></textarea>
+      </div>
+
+      <div class="input-pane">
+        <div class="input-pane__header">
+          <label for="new-content" class="input-pane__label">Updated</label>
+          <label for="new-file" class="file-upload-btn" title="Upload a file">Upload</label>
+          <input
+            type="file"
+            id="new-file"
+            class="file-upload-input"
+            accept=".html,.md,.txt,.js,.css,.mermaid"
+          />
+        </div>
+        <textarea
+          id="new-content"
+          class="input-pane__textarea"
+          spellcheck="false"
+          placeholder="Paste the updated file contents here..."
+        ></textarea>
+      </div>
+    </section>
+
+    <section class="controls" aria-label="Diff controls">
+      <div class="controls__group controls__group--actions">
+        <button id="compare-btn" type="button" class="btn btn--primary">Compare</button>
+        <button id="load-example-btn" type="button" class="btn btn--secondary">Load Example</button>
+      </div>
+
+      <div class="controls__group controls__group--options">
+        <div class="view-toggle" role="radiogroup" aria-label="Diff view mode">
+          <input type="radio" id="view-unified" name="view-mode" value="unified" checked />
+          <label for="view-unified">Unified</label>
+          <input type="radio" id="view-split" name="view-mode" value="split" />
+          <label for="view-split">Split</label>
+        </div>
+
+        <div class="context-input">
+          <label for="context-lines">Context lines</label>
+          <input
+            type="number"
+            id="context-lines"
+            min="0"
+            max="200"
+            value="3"
+            step="1"
+          />
+        </div>
+      </div>
+    </section>
+
+    <section id="stats-bar" class="stats-bar" aria-label="Diff statistics" hidden>
+      <div class="stats-bar__item stats-bar__item--added">
+        <span class="stats-bar__label">Added</span>
+        <span id="stat-added" class="stats-bar__value">0</span>
+      </div>
+      <div class="stats-bar__item stats-bar__item--removed">
+        <span class="stats-bar__label">Removed</span>
+        <span id="stat-removed" class="stats-bar__value">0</span>
+      </div>
+      <div class="stats-bar__item stats-bar__item--changed">
+        <span class="stats-bar__label">Changed</span>
+        <span id="stat-changed" class="stats-bar__value">0</span>
+      </div>
+      <div class="stats-bar__item stats-bar__item--similarity">
+        <span class="stats-bar__label">Similarity</span>
+        <span id="stat-similarity" class="stats-bar__value">0%</span>
+      </div>
+    </section>
+
+    <section id="diff-output" class="diff-output" aria-label="Diff output" hidden></section>
+
+    <section id="empty-state" class="empty-state" aria-label="No diff yet">
+      <p class="empty-state__title">No diff yet</p>
+      <p class="empty-state__hint">Paste two file versions above and click <strong>Compare</strong> — or try <strong>Load Example</strong>.</p>
+    </section>
+  </main>
+
+  <script src="/static/js/app.js" defer></script>
+</body>
+</html>

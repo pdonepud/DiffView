@@ -34,3 +34,6 @@ Thumbs.db
 # Editor (workspace file is intentionally committed)
 .vscode/
 .idea/
+
+# Local-only reference material
+docs/
