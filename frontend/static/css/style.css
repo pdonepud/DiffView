@@ -460,6 +460,46 @@ mark.char-del {
   text-decoration-color: rgba(255, 188, 184, 0.5);
 }
 
+/* ---------- Document view ---------- */
+
+.diff-output.document {
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.document-view {
+  padding: 28px 36px;
+  max-width: 80ch;
+  margin: 0 auto;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.document-view .word-add {
+  background: var(--add-bg-strong);
+  color: #d6f5dc;
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.document-view .word-del {
+  background: var(--del-bg-strong);
+  color: #ffd9d7;
+  padding: 1px 3px;
+  border-radius: 3px;
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 188, 184, 0.6);
+}
+
+.document-view__empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* ---------- Empty state ---------- */
 
 .empty-state {

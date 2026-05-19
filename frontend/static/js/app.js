@@ -51,6 +51,119 @@
   };
 
   // ---------------------------------------------------------------------------
+  // Document-mode helpers (word-level diff on plain text)
+  // ---------------------------------------------------------------------------
+
+  // Strip HTML tags and decode common entities. Block-level closers become
+  // newlines so paragraphs don't collapse into one long run.
+  const stripHtml = (input) =>
+    input
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|pre|section|article|header|footer)>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n");
+
+  // Split into alternating word / whitespace tokens so whitespace survives diff.
+  const tokenizeWords = (text) => text.match(/\S+|\s+/g) || [];
+
+  // LCS-based diff returning ordered ops: { type: 'eq'|'add'|'del', word }.
+  const wordDiff = (a, b) => {
+    const m = a.length;
+    const n = b.length;
+    // Rows of length n+1; use plain Array for simplicity (typical inputs modest).
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+    const ops = [];
+    let i = m;
+    let j = n;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+        ops.push({ type: "eq", word: a[i - 1] });
+        i--; j--;
+      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        ops.push({ type: "add", word: b[j - 1] });
+        j--;
+      } else {
+        ops.push({ type: "del", word: a[i - 1] });
+        i--;
+      }
+    }
+    ops.reverse();
+    return ops;
+  };
+
+  // Build the document-view HTML by collapsing consecutive same-type ops
+  // into a single span so multi-word runs read as one phrase.
+  const renderDocument = (oldRaw, newRaw) => {
+    const oldText = stripHtml(oldRaw);
+    const newText = stripHtml(newRaw);
+    const a = tokenizeWords(oldText);
+    const b = tokenizeWords(newText);
+
+    if (a.length === 0 && b.length === 0) {
+      return `<div class="document-view"><div class="document-view__empty">No text to compare.</div></div>`;
+    }
+
+    const ops = wordDiff(a, b);
+
+    let html = '<div class="document-view">';
+    let added = 0;
+    let removed = 0;
+    let kept = 0;
+    let idx = 0;
+    while (idx < ops.length) {
+      const type = ops[idx].type;
+      let chunk = "";
+      while (idx < ops.length && ops[idx].type === type) {
+        const w = ops[idx].word;
+        chunk += w;
+        // Count words only, not pure whitespace tokens.
+        if (/\S/.test(w)) {
+          if (type === "add") added++;
+          else if (type === "del") removed++;
+          else kept++;
+        }
+        idx++;
+      }
+      const escaped = escapeHtml(chunk);
+      if (type === "eq") html += escaped;
+      else html += `<span class="word-${type}">${escaped}</span>`;
+    }
+    html += "</div>";
+
+    const oldWords = a.filter((t) => /\S/.test(t)).length;
+    const newWords = b.filter((t) => /\S/.test(t)).length;
+    const denom = oldWords + newWords;
+    const similarity = denom === 0 ? 100 : Math.round((2 * kept * 1000) / denom) / 10;
+
+    return {
+      html,
+      stats: {
+        added,
+        removed,
+        changed: 0,
+        similarity,
+      },
+    };
+  };
+
+  // ---------------------------------------------------------------------------
   // Rendering
   // ---------------------------------------------------------------------------
 
@@ -172,19 +285,44 @@
   // State updates
   // ---------------------------------------------------------------------------
 
-  const showResults = (data) => {
-    const { lines, stats } = data;
-
+  const updateStats = (stats) => {
     els.statAdded.textContent = stats.added;
     els.statRemoved.textContent = stats.removed;
     els.statChanged.textContent = stats.changed;
     els.statSimilarity.textContent = `${stats.similarity}%`;
+  };
+
+  const showResults = (data) => {
+    const { lines, stats } = data;
+    updateStats(stats);
 
     const mode = getViewMode();
     els.diffOutput.classList.toggle("split", mode === "split");
+    els.diffOutput.classList.toggle("document", false);
     els.diffOutput.innerHTML =
       mode === "split" ? renderSplit(lines) : renderUnified(lines);
 
+    els.statsBar.hidden = false;
+    els.diffOutput.hidden = false;
+    els.emptyState.hidden = true;
+  };
+
+  const showDocument = () => {
+    const result = renderDocument(els.oldContent.value, els.newContent.value);
+    // Empty inputs → render the empty placeholder and bail without stats.
+    if (typeof result === "string") {
+      els.diffOutput.classList.remove("split");
+      els.diffOutput.classList.add("document");
+      els.diffOutput.innerHTML = result;
+      els.diffOutput.hidden = false;
+      els.statsBar.hidden = true;
+      els.emptyState.hidden = true;
+      return;
+    }
+    updateStats(result.stats);
+    els.diffOutput.classList.remove("split");
+    els.diffOutput.classList.add("document");
+    els.diffOutput.innerHTML = result.html;
     els.statsBar.hidden = false;
     els.diffOutput.hidden = false;
     els.emptyState.hidden = true;
@@ -205,6 +343,12 @@
   // ---------------------------------------------------------------------------
 
   const runCompare = async () => {
+    // Document mode is purely client-side — no API round-trip needed.
+    if (getViewMode() === "document") {
+      showDocument();
+      return;
+    }
+
     const payload = {
       old_content: els.oldContent.value,
       new_content: els.newContent.value,
@@ -312,7 +456,12 @@
   // Re-render on view-mode toggle without re-fetching.
   document.querySelectorAll('input[name="view-mode"]').forEach((radio) => {
     radio.addEventListener("change", () => {
-      if (lastResponse) showResults(lastResponse);
+      const mode = getViewMode();
+      if (mode === "document") {
+        showDocument();
+      } else if (lastResponse) {
+        showResults(lastResponse);
+      }
     });
   });
 
